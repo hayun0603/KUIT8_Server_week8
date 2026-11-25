@@ -1,5 +1,11 @@
 package webserver;
 
+import db.MemoryUserRepository;
+import http.HttpRequest;
+import http.HttpResponse;
+import http.HttpMethod;
+import model.User;
+
 import java.io.*;
 import java.net.Socket;
 import java.util.logging.Level;
@@ -17,36 +23,85 @@ public class RequestHandler implements Runnable{
     public void run() {
         log.log(Level.INFO, "New Client Connect! Connected IP : " + connection.getInetAddress() + ", Port : " + connection.getPort());
         try (InputStream in = connection.getInputStream(); OutputStream out = connection.getOutputStream()){
-            BufferedReader br = new BufferedReader(new InputStreamReader(in));
-            DataOutputStream dos = new DataOutputStream(out);
-
-            byte[] body = "Hello World".getBytes();
-            response200Header(dos, body.length);
-            responseBody(dos, body);
-
-        } catch (IOException e) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8));
+            HttpRequest request = HttpRequest.from(reader);
+            HttpResponse response = new HttpResponse(out);
+            route(request, response);
+        } catch (Exception e) {
             log.log(Level.SEVERE,e.getMessage());
         }
     }
 
-    private void response200Header(DataOutputStream dos, int lengthOfBodyContent) {
-        try {
-            dos.writeBytes("HTTP/1.1 200 OK \r\n");
-            dos.writeBytes("Content-Type: text/html;charset=utf-8\r\n");
-            dos.writeBytes("Content-Length: " + lengthOfBodyContent + "\r\n");
-            dos.writeBytes("\r\n");
-        } catch (IOException e) {
-            log.log(Level.SEVERE, e.getMessage());
+    private void route(HttpRequest request, HttpResponse response) throws IOException {
+        String path = request.getPath();
+
+        if (request.getMethod() == HttpMethod.GET && (path.equals("/") || path.equals("/index.html"))) {
+            response.forward("/index.html");
+            return;
+        }
+        if (request.getMethod() == HttpMethod.GET && path.equals("/css/styles.css")) {
+            response.forward("/css/styles.css");
+            return;
+        }
+        if (request.getMethod() == HttpMethod.GET && path.equals("/user/signup")) {
+            signup(request, response);
+            return;
+        }
+        if (request.getMethod() == HttpMethod.POST && path.equals("/user/signup")) {
+            signup(request, response);
+            return;
+        }
+        if (request.getMethod() == HttpMethod.POST && path.equals("/user/login")) {
+            login(request, response);
+            return;
+        }
+        if (request.getMethod() == HttpMethod.GET
+                && (path.equals("/user/userList") || path.equals("/user/list.html"))) {
+            if (request.isLogined()) {
+                response.forward("/user/list.html");
+            } else {
+                response.redirect("/user/login.html");
+            }
+            return;
+        }
+        if (request.getMethod() == HttpMethod.GET && path.endsWith(".html")) {
+            response.forward(path);
+            return;
+        }
+        response.forward(path);
+    }
+
+    private void signup(HttpRequest request, HttpResponse response) throws IOException {
+        MapParameter parameter = new MapParameter(request);
+        User user = new User(
+                parameter.get("userId"),
+                parameter.get("password"),
+                parameter.get("name"),
+                parameter.get("email"));
+        MemoryUserRepository.getInstance().addUser(user);
+        response.redirect("/index.html");
+    }
+
+    private void login(HttpRequest request, HttpResponse response) throws IOException {
+        MapParameter parameter = new MapParameter(request);
+        User user = MemoryUserRepository.getInstance().findUserById(parameter.get("userId"));
+        if (user != null && user.getPassword().equals(parameter.get("password"))) {
+            response.redirect("/index.html", "logined=true; Path=/");
+        } else {
+            response.redirect("/user/login_failed.html");
         }
     }
 
-    private void responseBody(DataOutputStream dos, byte[] body) {
-        try {
-            dos.write(body, 0, body.length);
-            dos.flush();
-        } catch (IOException e) {
-            log.log(Level.SEVERE, e.getMessage());
+    private static class MapParameter {
+        private final HttpRequest request;
+
+        private MapParameter(HttpRequest request) {
+            this.request = request;
+        }
+
+        private String get(String name) {
+            String value = request.getParameter(name);
+            return value == null ? "" : value;
         }
     }
-
 }
